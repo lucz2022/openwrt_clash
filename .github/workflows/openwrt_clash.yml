@@ -42,21 +42,9 @@ jobs:
           curl -L "$url" -o packages/$(basename "$url")
           ls -lah packages | head
 
-      - name: Build image (with OpenClash preinstalled)
-        run: |
-          cd openwrt-imagebuilder-24.10.5-x86-64.Linux-x86_64
-          make image PROFILE=generic ROOTFS_PARTSIZE=2048 \
-          PACKAGES="luci luci-base luci-compat luci-ssl \
-          bash curl ca-bundle unzip ip-full ipset \
-          dnsmasq-full -dnsmasq \
-          ruby ruby-yaml kmod-tun kmod-inet-diag \
-          iptables iptables-mod-tproxy iptables-mod-extra \
-          luci-app-openclash"
-
-      - name: Build image (conflict-free, OpenClash-ready)
+      - name: Build image (OpenClash preinstalled)
         run: |
           cd "${IBDIR}"
-          # 关键：不放 dnsmasq-full / 不用 -dnsmasq，避免 24.10 冲突导致依赖链跳过
           make image PROFILE=generic ROOTFS_PARTSIZE=2048 \
           PACKAGES="\
           luci luci-base luci-compat luci-ssl \
@@ -66,7 +54,9 @@ jobs:
           ruby ruby-yaml \
           kmod-tun kmod-inet-diag \
           iptables iptables-mod-tproxy iptables-mod-extra \
+          luci-app-openclash \
           " V=s
+
 
       - name: Collect outputs
         run: |
