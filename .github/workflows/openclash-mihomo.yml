@@ -1,0 +1,94 @@
+name: Mirror OpenClash + Mihomo (fixed + versioned)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "10 3 1 * *"
+
+permissions:
+  contents: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Install deps
+        run: |
+          sudo apt update
+          sudo apt install -y curl jq gzip coreutils
+
+      - name: Fetch OpenClash (latest ipk)
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/vernesong/OpenClash/releases"
+
+          tag="$(curl -sL "$api" | jq -r '.[0].tag_name' | head -n1 | tr -d '\r\n')"
+          url="$(curl -sL "$api" | jq -r '.[0].assets[] | select(.name|test("^luci-app-openclash_.*_all\\.ipk$")) | .browser_download_url' | head -n1 | tr -d '\r\n')"
+
+          echo "OPENCLASH_TAG=$tag" >> "$GITHUB_ENV"
+          echo "OPENCLASH_URL=$url" >> "$GITHUB_ENV"
+          echo "OPENCLASH_NAME=$(basename "$url")" >> "$GITHUB_ENV"
+
+          if [ -z "$url" ] || [ "$url" = "null" ]; then
+            echo "ERROR: cannot find luci-app-openclash_*_all.ipk"
+            curl -sL "$api" | jq -r '.[0].assets[].name'
+            exit 1
+          fi
+
+      - name: Fetch Mihomo (latest compatible amd64 gz)
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/MetaCubeX/mihomo/releases/latest"
+
+          tag="$(curl -sL "$api" | jq -r '.tag_name' | head -n1 | tr -d '\r\n')"
+          url="$(curl -sL "$api" | jq -r '.assets[].browser_download_url | select(test("mihomo-linux-amd64-compatible-";"i")) | select(endswith(".gz"))' | head -n1 | tr -d '\r\n')"
+
+          echo "MIHOMO_TAG=$tag" >> "$GITHUB_ENV"
+          echo "MIHOMO_GZ_URL=$url" >> "$GITHUB_ENV"
+          echo "MIHOMO_GZ_NAME=$(basename "$url")" >> "$GITHUB_ENV"
+
+          if [ -z "$url" ] || [ "$url" = "null" ]; then
+            echo "ERROR: cannot find mihomo-linux-amd64-compatible-*.gz"
+            curl -sL "$api" | jq -r '.assets[].name'
+            exit 1
+          fi
+
+      - name: Download + produce fixed-name + checksums
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          mkdir -p dist
+
+          # OpenClash (versioned)
+          curl -fL --retry 5 --retry-delay 2 "$OPENCLASH_URL" -o "dist/$OPENCLASH_NAME"
+
+          # Mihomo: keep versioned gz + also fixed mihomo.gz and unpacked mihomo
+          curl -fL --retry 5 --retry-delay 2 "$MIHOMO_GZ_URL" -o "dist/$MIHOMO_GZ_NAME"
+          cp -f "dist/$MIHOMO_GZ_NAME" "dist/mihomo.gz"
+          gzip -dc "dist/mihomo.gz" > "dist/mihomo"
+          chmod +x "dist/mihomo"
+
+          # Record versions
+          {
+            echo "OPENCLASH_TAG=$OPENCLASH_TAG"
+            echo "OPENCLASH_FILE=$OPENCLASH_NAME"
+            echo "MIHOMO_TAG=$MIHOMO_TAG"
+            echo "MIHOMO_GZ_FILE=$MIHOMO_GZ_NAME"
+          } > "dist/UPSTREAM_VERSIONS.txt"
+
+          (cd dist && sha256sum * > SHA256SUMS.txt)
+          ls -lah dist
+
+      - name: Publish/Update Release (tag=latest)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest Mirror
+          files: dist/*
+
+      - name: Publish Archive Release (tag=mirror-runid)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: mirror-${{ github.run_id }}
+          name: Archive Mirror
+          files: dist/*
