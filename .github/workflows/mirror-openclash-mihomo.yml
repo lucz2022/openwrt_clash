@@ -41,30 +41,26 @@ jobs:
           echo "name=$name" >> $GITHUB_OUTPUT
           echo "OpenClash asset: $name"
 
-      - name: Fetch latest Mihomo core (linux amd64)
-        id: mihomo
+      - name: Fetch latest Mihomo core (compatible amd64 gz) and unpack
         run: |
           set -e
+          sudo apt update
+          sudo apt install -y curl jq gzip
+
           api="https://api.github.com/repos/MetaCubeX/mihomo/releases/latest"
-          # 这里用“尽量稳”的匹配：优先挑 linux + amd64/x86_64 且不是压缩包/校验文件
           url=$(curl -sL "$api" | jq -r '
             .assets[].browser_download_url
-            | select(test("linux";"i"))
-            | select(test("amd64|x86_64";"i"))
-            | select(test("\\.gz$|\\.zip$|\\.tar\\.gz$|\\.sha256$|\\.sha256sum$|\\.txt$";"i") | not)
+            | select(test("mihomo-linux-amd64-compatible-";"i"))
+            | select(endswith(".gz"))
           ' | head -n1)
 
-          if [ -z "$url" ] || [ "$url" = "null" ]; then
-            echo "No suitable mihomo linux-amd64 asset found. You may need to adjust the filter."
-            exit 1
-          fi
-
-          name=$(basename "$url")
-          echo "MIHOMO_URL=$url" >> $GITHUB_ENV
-          echo "MIHOMO_NAME=$name" >> $GITHUB_ENV
-          echo "url=$url" >> $GITHUB_OUTPUT
-          echo "name=$name" >> $GITHUB_OUTPUT
-          echo "Mihomo asset: $name"
+          echo "mihomo gz: $url"
+          mkdir -p dist
+          curl -L --retry 5 --retry-delay 2 "$url" -o dist/mihomo.gz
+          gzip -dc dist/mihomo.gz > dist/mihomo
+          chmod +x dist/mihomo
+          sha256sum dist/mihomo > dist/mihomo.sha256
+          ls -lah dist
 
       - name: Download assets
         run: |
