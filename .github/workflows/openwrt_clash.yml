@@ -55,6 +55,12 @@ jobs:
           kmod-tun kmod-inet-diag \
           iptables iptables-mod-tproxy iptables-mod-extra \
           luci-app-openclash \
+          dockerd \
+          docker-compose-plugin \
+          luci-app-dockerman \
+          luci-i18n-dockerman-zh-cn \
+          kmod-br-netfilter \
+          qemu-ga \
           " V=s
 
 
@@ -78,7 +84,7 @@ jobs:
           body: |
             - OpenWrt: ${{ env.VER }}
             - Target: x86/64 (generic)
-            - Rootfs: ext4 (ROOTFS_PARTSIZE=2048)
+            - Rootfs: ext4 (ROOTFS_PARTSIZE=4096)
             - Included: LuCI + OpenClash dependencies (conflict-free)
             - Note: dnsmasq-full intentionally NOT included to avoid dnsmasq conflict on 24.10
           files: |
