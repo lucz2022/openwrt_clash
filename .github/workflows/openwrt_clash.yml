@@ -56,7 +56,7 @@ jobs:
           iptables iptables-mod-tproxy iptables-mod-extra \
           luci-app-openclash \
           dockerd \
-          docker-compose-plugin \
+          docker-compose \
           luci-app-dockerman \
           luci-i18n-dockerman-zh-cn \
           kmod-br-netfilter \
