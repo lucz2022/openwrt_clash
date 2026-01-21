@@ -1,0 +1,91 @@
+name: Mirror OpenClash + Mihomo to my Releases
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 每月 1 号 03:10 UTC（新加坡/中国时间 +8 大约 11:10）
+    - cron: "10 3 1 * *"
+
+permissions:
+  contents: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Prepare tools
+        run: |
+          sudo apt update
+          sudo apt install -y curl jq coreutils
+
+      - name: Fetch latest OpenClash ipk (all)
+        id: openclash
+        run: |
+          set -e
+          api="https://api.github.com/repos/vernesong/OpenClash/releases"
+          url=$(curl -sL "$api" | jq -r '
+            .[0].assets[]
+            | select(.name|test("^luci-app-openclash_.*_all\\.ipk$"))
+            | .browser_download_url
+          ' | head -n1)
+
+          if [ -z "$url" ] || [ "$url" = "null" ]; then
+            echo "No luci-app-openclash_*_all.ipk found."
+            exit 1
+          fi
+
+          name=$(basename "$url")
+          echo "OPENCLASH_URL=$url" >> $GITHUB_ENV
+          echo "OPENCLASH_NAME=$name" >> $GITHUB_ENV
+          echo "url=$url" >> $GITHUB_OUTPUT
+          echo "name=$name" >> $GITHUB_OUTPUT
+          echo "OpenClash asset: $name"
+
+      - name: Fetch latest Mihomo core (linux amd64)
+        id: mihomo
+        run: |
+          set -e
+          api="https://api.github.com/repos/MetaCubeX/mihomo/releases/latest"
+          # 这里用“尽量稳”的匹配：优先挑 linux + amd64/x86_64 且不是压缩包/校验文件
+          url=$(curl -sL "$api" | jq -r '
+            .assets[].browser_download_url
+            | select(test("linux";"i"))
+            | select(test("amd64|x86_64";"i"))
+            | select(test("\\.gz$|\\.zip$|\\.tar\\.gz$|\\.sha256$|\\.sha256sum$|\\.txt$";"i") | not)
+          ' | head -n1)
+
+          if [ -z "$url" ] || [ "$url" = "null" ]; then
+            echo "No suitable mihomo linux-amd64 asset found. You may need to adjust the filter."
+            exit 1
+          fi
+
+          name=$(basename "$url")
+          echo "MIHOMO_URL=$url" >> $GITHUB_ENV
+          echo "MIHOMO_NAME=$name" >> $GITHUB_ENV
+          echo "url=$url" >> $GITHUB_OUTPUT
+          echo "name=$name" >> $GITHUB_OUTPUT
+          echo "Mihomo asset: $name"
+
+      - name: Download assets
+        run: |
+          set -e
+          mkdir -p dist
+          curl -L --retry 5 --retry-delay 2 "$OPENCLASH_URL" -o "dist/$OPENCLASH_NAME"
+          curl -L --retry 5 --retry-delay 2 "$MIHOMO_URL"    -o "dist/$MIHOMO_NAME"
+          (cd dist && sha256sum * > SHA256SUMS.txt)
+          ls -lah dist
+
+      - name: Create or update Release (tag = upstream signatures)
+        uses: softprops/action-gh-release@v2
+        with:
+          # 用“上游文件名”+日期做 tag，避免 tag 冲突，也方便你追溯
+          tag_name: mirror-${{ github.run_id }}
+          name: Mirror OpenClash + Mihomo (run ${{ github.run_id }})
+          body: |
+            Mirrored from upstream:
+            - OpenClash: ${{ env.OPENCLASH_NAME }}
+            - Mihomo: ${{ env.MIHOMO_NAME }}
+
+            Files include SHA256SUMS.txt for integrity.
+          files: |
+            dist/*
