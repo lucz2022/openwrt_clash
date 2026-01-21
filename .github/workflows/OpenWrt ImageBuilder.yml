@@ -1,11 +1,15 @@
-name: OpenWrt ImageBuilder
+name: OpenWrt ImageBuilder (x86 OpenClash base) + Release
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-22.04
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -13,21 +17,56 @@ jobs:
       - name: Install deps
         run: |
           sudo apt update
-          sudo apt install -y build-essential zstd xz-utils
+          sudo apt install -y build-essential zstd xz-utils wget sha256sum coreutils
 
       - name: Download ImageBuilder
         run: |
-          wget https://downloads.openwrt.org/releases/24.10.5/targets/x86/64/openwrt-imagebuilder-24.10.5-x86-64.Linux-x86_64.tar.zst
-          tar --use-compress-program=unzstd -xf openwrt-imagebuilder-24.10.5-x86-64.Linux-x86_64.tar.zst
+          VER=24.10.5
+          TARGET_URL="https://downloads.openwrt.org/releases/${VER}/targets/x86/64"
+          IB="openwrt-imagebuilder-${VER}-x86-64.Linux-x86_64.tar.zst"
+          wget "${TARGET_URL}/${IB}"
+          tar --use-compress-program=unzstd -xf "${IB}"
+          echo "VER=${VER}" >> $GITHUB_ENV
+          echo "IBDIR=openwrt-imagebuilder-${VER}-x86-64.Linux-x86_64" >> $GITHUB_ENV
 
-      - name: Build image
+      - name: Build image (conflict-free, OpenClash-ready)
         run: |
-          cd openwrt-imagebuilder-24.10.5-x86-64.Linux-x86_64
+          cd "${IBDIR}"
+          # 关键：不放 dnsmasq-full / 不用 -dnsmasq，避免 24.10 冲突导致依赖链跳过
           make image PROFILE=generic ROOTFS_PARTSIZE=2048 \
-          PACKAGES="luci luci-base luci-compat luci-ssl bash curl ca-bundle unzip ip-full ipset dnsmasq-full -dnsmasq ruby ruby-yaml kmod-tun kmod-inet-diag iptables iptables-mod-tproxy iptables-mod-extra"
+          PACKAGES="\
+          luci luci-base luci-compat luci-ssl \
+          bash curl ca-bundle unzip \
+          ip-full ipset \
+          dnsmasq-full -dnsmasq \
+          ruby ruby-yaml \
+          kmod-tun kmod-inet-diag \
+          iptables iptables-mod-tproxy iptables-mod-extra \
+          " V=s
 
-      - name: Upload image
+      - name: Collect outputs
+        run: |
+          mkdir -p out
+          cp -v "${IBDIR}/bin/targets/x86/64/"* out/ || true
+          (cd out && sha256sum * > sha256sums.txt)
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-x86
-          path: openwrt-imagebuilder-24.10.5-x86-64.Linux-x86_64/bin/targets/x86/64/*
+          name: openwrt-x86-${{ env.VER }}
+          path: out/*
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "openwrt-${{ env.VER }}-x86-openclash-base"
+          name: "OpenWrt ${{ env.VER }} x86 OpenClash Base (ImageBuilder)"
+          body: |
+            - OpenWrt: ${{ env.VER }}
+            - Target: x86/64 (generic)
+            - Rootfs: ext4 (ROOTFS_PARTSIZE=2048)
+            - Included: LuCI + OpenClash dependencies (conflict-free)
+            - Note: dnsmasq-full intentionally NOT included to avoid dnsmasq conflict on 24.10
+          files: |
+            out/*.img.gz
+            out/*.txt
