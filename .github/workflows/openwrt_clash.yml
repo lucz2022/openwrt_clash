@@ -1,4 +1,4 @@
-name: OpenWrt ImageBuilder (x86 OpenClash base) + Release
+name: ImageBuilder openwrt_clash
 
 on:
   workflow_dispatch:
