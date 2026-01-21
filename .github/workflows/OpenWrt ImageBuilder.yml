@@ -17,7 +17,8 @@ jobs:
       - name: Install deps
         run: |
           sudo apt update
-          sudo apt install -y build-essential zstd xz-utils wget sha256sum coreutils
+          sudo apt install -y build-essential zstd xz-utils wget
+          
 
       - name: Download ImageBuilder
         run: |
