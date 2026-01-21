@@ -1,4 +1,4 @@
-name: Mirror OpenClash + Mihomo (to my Releases)
+name: Mirror OpenClash + Mihomo (fixed-name + versioned) to my Releases
 
 on:
   workflow_dispatch:
@@ -21,12 +21,14 @@ jobs:
           sudo apt update
           sudo apt install -y curl jq gzip coreutils
 
-      # 1) 拉 OpenClash 的 luci-app-openclash_*_all.ipk
+      # 1) 取上游最新 OpenClash：luci-app-openclash_*_all.ipk
       - name: Fetch latest OpenClash ipk (all)
-        id: openclash
         run: |
           set -euo pipefail
           api="https://api.github.com/repos/vernesong/OpenClash/releases"
+          tag="$(
+            curl -sL "$api" | jq -r '.[0].tag_name' | head -n1 | tr -d '\r\n'
+          )"
           url="$(
             curl -sL "$api" | jq -r '
               .[0].assets[]
@@ -35,7 +37,8 @@ jobs:
             ' | head -n1 | tr -d '\r\n'
           )"
 
-          echo "openclash url=[$url]"
+          echo "OpenClash tag=[$tag]"
+          echo "OpenClash url=[$url]"
 
           if [ -z "$url" ] || [ "$url" = "null" ]; then
             echo "ERROR: cannot find luci-app-openclash_*_all.ipk in latest release."
@@ -43,16 +46,20 @@ jobs:
             exit 1
           fi
 
-          name="$(basename "$url")"
+          echo "OPENCLASH_TAG=$tag" >> "$GITHUB_ENV"
           echo "OPENCLASH_URL=$url" >> "$GITHUB_ENV"
-          echo "OPENCLASH_NAME=$name" >> "$GITHUB_ENV"
+          echo "OPENCLASH_NAME=$(basename "$url")" >> "$GITHUB_ENV"
 
-      # 2) 拉 Mihomo core（优先 compatible 的 .gz），并解压成可执行文件 dist/mihomo
-      - name: Fetch latest Mihomo core (linux amd64 compatible gz) and unpack
-        id: mihomo
+      # 2) 取上游最新 Mihomo：优先 linux-amd64-compatible 的 .gz（并解压成可执行文件）
+      - name: Fetch latest Mihomo core (linux amd64 compatible gz)
         run: |
           set -euo pipefail
           api="https://api.github.com/repos/MetaCubeX/mihomo/releases/latest"
+
+          tag="$(
+            curl -sL "$api" | jq -r '.tag_name' | head -n1 | tr -d '\r\n'
+          )"
+
           url="$(
             curl -sL "$api" | jq -r '
               .assets[].browser_download_url
@@ -61,7 +68,8 @@ jobs:
             ' | head -n1 | tr -d '\r\n'
           )"
 
-          echo "mihomo url=[$url]"
+          echo "Mihomo tag=[$tag]"
+          echo "Mihomo url=[$url]"
 
           if [ -z "$url" ] || [ "$url" = "null" ]; then
             echo "ERROR: cannot find mihomo-linux-amd64-compatible-*.gz in latest release."
@@ -70,38 +78,73 @@ jobs:
             exit 1
           fi
 
+          echo "MIHOMO_TAG=$tag" >> "$GITHUB_ENV"
           echo "MIHOMO_GZ_URL=$url" >> "$GITHUB_ENV"
           echo "MIHOMO_GZ_NAME=$(basename "$url")" >> "$GITHUB_ENV"
 
-      - name: Download assets + checksums
+      # 3) 下载、生成“固定名 + 带版本号原始文件”，并生成校验/版本记录
+      - name: Download assets (fixed + versioned) + checksums
         run: |
           set -euo pipefail
           mkdir -p dist
 
-          # OpenClash ipk
+          # OpenClash：只保留原始版本名（ipk 本身带版本）
           curl -fL --retry 5 --retry-delay 2 "$OPENCLASH_URL" -o "dist/$OPENCLASH_NAME"
 
-          # Mihomo core (gz -> binary)
-          curl -fL --retry 5 --retry-delay 2 "$MIHOMO_GZ_URL" -o "dist/mihomo.gz"
+          # Mihomo：保留原始带版本号的 gz + 同时生成固定名 mihomo.gz / mihomo（二进制）
+          curl -fL --retry 5 --retry-delay 2 "$MIHOMO_GZ_URL" -o "dist/$MIHOMO_GZ_NAME"
+          cp -f "dist/$MIHOMO_GZ_NAME" "dist/mihomo.gz"
           gzip -dc "dist/mihomo.gz" > "dist/mihomo"
           chmod +x "dist/mihomo"
 
-          # checksum
+          # 写清楚上游版本，方便你追溯
+          {
+            echo "OPENCLASH_TAG=$OPENCLASH_TAG"
+            echo "OPENCLASH_FILE=$OPENCLASH_NAME"
+            echo "MIHOMO_TAG=$MIHOMO_TAG"
+            echo "MIHOMO_GZ_FILE=$MIHOMO_GZ_NAME"
+          } > dist/UPSTREAM_VERSIONS.txt
+
+          # 生成校验
           (cd dist && sha256sum * > SHA256SUMS.txt)
 
           ls -lah dist
 
-      # 3) 发布到你自己的 Releases（每次跑一个新 Release，方便回滚）
-      - name: Create Release and upload files
+      # 4) “跟随上游更新同步镜像”：
+      #    用固定 tag（latest）更新同一个 Release，始终保持你仓库里有一个“最新版镜像”
+      - name: Publish/Update Release tag: latest
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "Latest Mirror: OpenClash + Mihomo"
+          body: |
+            This release is auto-updated to follow upstream.
+
+            Upstream:
+            - OpenClash tag: ${{ env.OPENCLASH_TAG }}
+            - Mihomo tag:   ${{ env.MIHOMO_TAG }}
+
+            Included:
+            - OpenClash ipk (versioned filename)
+            - Mihomo fixed name: mihomo (binary) + mihomo.gz
+            - Mihomo versioned gz filename
+            - UPSTREAM_VERSIONS.txt + SHA256SUMS.txt
+          files: |
+            dist/*
+          fail_on_unmatched_files: true
+
+      # 5) 额外再做一个“归档 Release”（每次跑一份，方便回滚对比）
+      - name: Publish Archive Release (run-id tag)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: mirror-${{ github.run_id }}
-          name: Mirror OpenClash + Mihomo (run ${{ github.run_id }})
+          name: "Archive Mirror (run ${{ github.run_id }})"
           body: |
-            Mirrored from upstream:
-            - OpenClash: ${{ env.OPENCLASH_NAME }}
-            - Mihomo: ${{ env.MIHOMO_GZ_NAME }} (unpacked to dist/mihomo)
+            Archive snapshot for this run.
 
-            Files include SHA256SUMS.txt for integrity verification.
+            Upstream:
+            - OpenClash tag: ${{ env.OPENCLASH_TAG }}
+            - Mihomo tag:   ${{ env.MIHOMO_TAG }}
           files: |
             dist/*
+          fail_on_unmatched_files: true
