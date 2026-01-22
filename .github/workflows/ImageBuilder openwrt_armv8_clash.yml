@@ -1,0 +1,92 @@
+name: ImageBuilder openwrt_clash
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install deps
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential zstd xz-utils wget
+          
+
+      - name: openwrt_clash ImageBuilder
+        run: |
+          VER=24.10.5
+          TARGET_URL="https://downloads.openwrt.org/releases/${VER}/targets/armsr/armv8"
+          IB="openwrt-imagebuilder-${VER}-armsr-armv8.Linux-x86_64.tar.zst"
+          wget "${TARGET_URL}/${IB}"
+          tar --use-compress-program=unzstd -xf "${IB}"
+          echo "VER=${VER}" >> $GITHUB_ENV
+          echo "IBDIR=openwrt-imagebuilder-${VER}-armsr-armv8.Linux-x86_64" >> $GITHUB_ENV
+      
+      - name: Download OpenClash ipk into ImageBuilder local repo
+        run: |
+          cd "${IBDIR}"
+          # 下载最新预发布(通常是 pre-release)，抓第一个 luci-app-openclash_*_all.ipk
+          sudo apt update && sudo apt install -y curl jq
+          url=$(curl -s https://api.github.com/repos/vernesong/OpenClash/releases \
+            | jq -r '.[0].assets[] | select(.name|test("^luci-app-openclash_.*_all\\.ipk$")) | .browser_download_url' \
+            | head -n1)
+          echo "OpenClash ipk: $url"
+          curl -L "$url" -o packages/$(basename "$url")
+          ls -lah packages | head
+
+      - name: Build image (OpenClash preinstalled)
+        run: |
+          cd "${IBDIR}"
+          make image PROFILE=generic ROOTFS_PARTSIZE=2048 \
+          PACKAGES="\
+          luci luci-base luci-compat luci-ssl \
+          bash curl ca-bundle unzip \
+          ip-full ipset \
+          dnsmasq-full -dnsmasq \
+          ruby ruby-yaml \
+          kmod-tun kmod-inet-diag \
+          iptables iptables-mod-tproxy iptables-mod-extra \
+          luci-app-openclash \
+          dockerd \
+          docker-compose \
+          luci-app-dockerman \
+          luci-i18n-dockerman-zh-cn \
+          kmod-br-netfilter \
+          qemu-ga \
+          " V=s
+
+
+      - name: Collect outputs
+        run: |
+          mkdir -p out
+          cp -v "${IBDIR}/bin/targets/armsr/armv8/"*rootfs.tar.gz out/ || true
+          (cd out && sha256sum * > sha256sums.txt)
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-armsr-armv8-${{ env.VER }}
+          path: out/*
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "openwrt-${{ env.VER }}-armsr-armv8-openclash-base"
+          name: "OpenWrt ${{ env.VER }} armsr/armv8 OpenClash Base (ImageBuilder)"
+          body: |
+            - OpenWrt: ${{ env.VER }}
+            - Target: armsr/armv8 (generic)
+            - Output: rootfs.tar.gz
+            - Included: LuCI + OpenClash dependencies (conflict-free)
+            - Note: dnsmasq-full intentionally NOT included to avoid dnsmasq conflict on 24.10
+          files: |
+            out/*rootfs.tar.gz
+            out/*.txt
